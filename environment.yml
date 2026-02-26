@@ -1,4 +1,4 @@
-name: netcomi-pipeline
+name: microbe-comm-struct
 channels:
   - conda-forge
   - bioconda

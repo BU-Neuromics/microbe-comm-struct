@@ -8,12 +8,15 @@
 #   03  FastSpar       (co-occurrence network, bootstrap p-values)
 #   04  Null-model     (Erdős–Rényi + configuration model validation)
 #
-# Prerequisites:
-#   - nextflow  on PATH  (java >= 11 required)
-#   - docker    on PATH  with microbe-comm-struct:latest built
-#     (run ./build.sh if the image is missing)
+# Nextflow is invoked via `conda run` using the environment defined in
+# environment.yml (name: microbe-comm-struct).  The environment is created
+# automatically on first use — no manual `conda activate` required.
 #
-#   On ARM64 hosts (e.g. DGX Spark), register QEMU before first use:
+# Prerequisites:
+#   - conda (Miniconda or Anaconda) on PATH or in a standard location
+#   - docker on PATH with microbe-comm-struct:latest built (or pulled from GHCR)
+#
+#   On ARM64 hosts (e.g. DGX Spark), register QEMU once before first use:
 #     docker run --privileged --rm tonistiigi/binfmt --install x86_64
 #
 # Usage:
@@ -29,7 +32,7 @@
 #   --output_dir DIR   Output directory [default: results]
 #   --seed INT         Random seed [default: 42]
 #
-# Nextflow options:
+# Nextflow options (passed through directly):
 #   -profile docker    Use Docker (default)
 #   -profile local     Run without Docker (packages must be installed locally)
 #   -profile slurm     Submit to SLURM via Singularity
@@ -44,6 +47,7 @@
 #       --taxonomy taxonomy.csv \
 #       --output_dir results/family
 #
+#   ./run_pipeline.sh --input counts.csv --metadata metadata.csv -profile slurm
 #   ./run_pipeline.sh --input counts.csv --metadata metadata.csv -resume
 # ============================================================
 
@@ -52,15 +56,48 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# ── Validate nextflow is available ───────────────────────────
-if ! command -v nextflow &>/dev/null; then
-    echo "Error: nextflow not found on PATH."
-    echo "Install via: conda install -c bioconda nextflow"
-    echo "         or: curl -s https://get.nextflow.io | bash"
+CONDA_ENV_NAME="microbe-comm-struct"
+CONDA_ENV_FILE="$SCRIPT_DIR/environment.yml"
+
+# ── Helpers ───────────────────────────────────────────────────
+_info() { echo "[INFO]  $*"; }
+_ok()   { echo "[OK]    $*"; }
+_err()  { echo "[ERROR] $*" >&2; }
+
+# ── 1. Locate conda ───────────────────────────────────────────
+find_conda() {
+    for candidate in \
+        "$(command -v conda 2>/dev/null)" \
+        "${CONDA_PREFIX:-}/bin/conda" \
+        "$HOME/miniconda3/bin/conda" \
+        "$HOME/miniforge3/bin/conda" \
+        "$HOME/anaconda3/bin/conda" \
+        "/opt/conda/bin/conda"
+    do
+        if [[ -x "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+CONDA_CMD="$(find_conda)" || {
+    _err "conda not found. Install Miniconda/Miniforge first, or add conda to PATH."
     exit 1
+}
+_ok "conda found: $CONDA_CMD"
+
+# ── 2. Create the conda env if it doesn't exist ───────────────
+if "$CONDA_CMD" env list | awk '{print $1}' | grep -qx "$CONDA_ENV_NAME"; then
+    _ok "Conda env '$CONDA_ENV_NAME' already exists"
+else
+    _info "Conda env '$CONDA_ENV_NAME' not found — creating from $CONDA_ENV_FILE ..."
+    "$CONDA_CMD" env create -f "$CONDA_ENV_FILE"
+    _ok "Conda env '$CONDA_ENV_NAME' created"
 fi
 
-# ── Validate required arguments ──────────────────────────────
+# ── 3. Validate required arguments ───────────────────────────
 has_input=0; has_metadata=0
 for arg in "$@"; do
     [[ "$arg" == "--input"    ]] && has_input=1
@@ -68,34 +105,50 @@ for arg in "$@"; do
 done
 
 if (( ! has_input || ! has_metadata )); then
-    grep "^#" "$0" | grep -v "^#!" | sed 's/^# \{0,1\}//' | head -50
+    # Print only the contiguous comment block at the top of the file
+    awk 'NR==1{next} /^[^#]/{exit} {sub(/^# ?/,""); print}' "$0"
     exit 1
 fi
 
-# ── Check Docker image ────────────────────────────────────────
-if ! docker image inspect microbe-comm-struct:latest &>/dev/null; then
-    echo "Docker image 'microbe-comm-struct:latest' not found — building now..."
-    bash "$SCRIPT_DIR/build.sh"
+# ── 4. Check Docker image (docker profile only) ───────────────
+using_docker=true
+for arg in "$@"; do
+    if [[ "$arg" == "slurm" || "$arg" == "local" ]]; then
+        using_docker=false
+    fi
+done
+
+if $using_docker && command -v docker &>/dev/null; then
+    if ! docker image inspect microbe-comm-struct:latest &>/dev/null; then
+        _info "Docker image 'microbe-comm-struct:latest' not found — building..."
+        bash "$SCRIPT_DIR/build.sh"
+    else
+        _ok "Docker image microbe-comm-struct:latest is present"
+    fi
 fi
 
-# ── Default to docker profile unless caller already passed -profile ──
+# ── 5. Default to docker profile unless caller passed -profile ─
 profile_flag="-profile docker"
 for arg in "$@"; do
     [[ "$arg" == "-profile" || "$arg" == "--profile" ]] && { profile_flag=""; break; }
 done
 
+# ── 6. Run pipeline via conda run ─────────────────────────────
 echo ""
 echo "============================================================="
 echo "  Community Structure Analysis Pipeline"
 echo "============================================================="
 echo ""
+_info "Launching Nextflow via conda env '$CONDA_ENV_NAME'..."
+echo ""
 
-nextflow run "$SCRIPT_DIR/main.nf" \
+"$CONDA_CMD" run -n "$CONDA_ENV_NAME" --no-capture-output \
+    nextflow run "$SCRIPT_DIR/main.nf" \
     $profile_flag \
     "$@"
 
 echo ""
-echo "Pipeline complete."
-out_dir="$(echo "$@" | grep -oP '(?<=--output_dir\s)\S+' || true)"
+_ok "Pipeline complete."
+out_dir="$(echo "$*" | grep -oP '(?<=--output_dir )\S+' || true)"
 out_dir="${out_dir:-results}"
 echo "Results: ${out_dir}/"
