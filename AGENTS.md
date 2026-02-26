@@ -194,25 +194,32 @@ Use positional `commandArgs(trailingOnly = TRUE)`; keep it simple.
   - System binary: `fastspar` (compiled from source)
 - **Working dir inside container:** `/workspace`
 
-### Build Troubleshooting
+### Build Troubleshooting — ARM64 (DGX Spark)
 
-**Error: `no match for platform in manifest`**
+The `bioc2u-builder` base image is **amd64-only**. This machine is arm64.
+We use QEMU emulation to build and run the amd64 image natively.
 
-The `bioc2u-builder` base image is x86_64-only. On ARM64 (this machine is arm64):
-
-Option A — add `--platform linux/amd64` to the build (uses QEMU emulation, very slow):
+**One-time QEMU setup (survives until reboot):**
 ```bash
-docker build --platform linux/amd64 -t microbe-comm-struct:latest .
+docker run --privileged --rm tonistiigi/binfmt --install x86_64
+```
+After this, `linux/amd64` appears in the Docker supported platforms list.
+
+**Build and run (unchanged after QEMU setup):**
+```bash
+./build.sh          # now passes --platform linux/amd64 internally
+./run.sh 01_aitchison_pca.R counts.csv metadata.csv
 ```
 
-Option B — change the `FROM` line to a multi-arch alternative:
-```dockerfile
-# R 4.5 + BiocManager — supports both amd64 and arm64
-FROM rocker/r-ver:4.5.0
-RUN R -e "install.packages('BiocManager')"
-```
-Then reinstall all Bioconductor packages via `BiocManager::install(...)`.
-Option B is preferred for native ARM64 performance.
+**⚠️ After a reboot**, re-run the QEMU registration command above before building or running the container.
+
+**Performance note:** The Dockerfile installs several GitHub packages (propr, SpiecEasi, SPRING, NetCoMi, LUPINE) that must compile from source. Under QEMU emulation this is very slow. These packages are not needed by the active scripts (01–04). Removing them from the Dockerfile would drastically reduce build time — see "Slimming the Dockerfile" below.
+
+**Slimming the Dockerfile (optional):**
+Scripts 01–04 only need: `zCompositions`, `softImpute`, `rsvd`, `ggplot2`,
+`pheatmap`, `igraph`, and the `fastspar` binary. All are apt-installable from
+bioc2u except fastspar (C++ build). Removing NetCoMi/SPRING/SpiecEasi/LUPINE
+would cut the build from potentially hours to ~10–20 minutes even under QEMU.
 
 ---
 
