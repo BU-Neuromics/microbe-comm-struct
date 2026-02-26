@@ -4,5 +4,5 @@ channels:
   - bioconda
   - defaults
 dependencies:
-  - openjdk>=11
-  - nextflow
+  - conda-forge::openjdk=17
+  - bioconda::nextflow

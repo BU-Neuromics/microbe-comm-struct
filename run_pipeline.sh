@@ -133,7 +133,32 @@ for arg in "$@"; do
     [[ "$arg" == "-profile" || "$arg" == "--profile" ]] && { profile_flag=""; break; }
 done
 
-# ── 6. Run pipeline via conda run ─────────────────────────────
+# ── 6. Verify Java works inside the conda env ─────────────────
+# Resolve the env prefix so we can set NXF_JAVA_HOME explicitly.
+# This sidesteps conflicts with system-wide JAVA_HOME on HPC clusters.
+CONDA_ENV_PREFIX="$("$CONDA_CMD" run -n "$CONDA_ENV_NAME" bash -c 'echo $CONDA_PREFIX')"
+
+# conda-forge openjdk can land in lib/jvm or expose java directly on PATH.
+# Probe both locations and fall back to whatever JAVA_HOME the env exports.
+if [[ -x "$CONDA_ENV_PREFIX/lib/jvm/bin/java" ]]; then
+    CONDA_JAVA_HOME="$CONDA_ENV_PREFIX/lib/jvm"
+elif [[ -x "$CONDA_ENV_PREFIX/bin/java" ]]; then
+    CONDA_JAVA_HOME="$CONDA_ENV_PREFIX"
+else
+    # Last resort: ask the env what it thinks JAVA_HOME is
+    CONDA_JAVA_HOME="$("$CONDA_CMD" run -n "$CONDA_ENV_NAME" bash -c 'echo "${JAVA_HOME:-}"')"
+fi
+
+if [[ -z "$CONDA_JAVA_HOME" || ! -x "$CONDA_JAVA_HOME/bin/java" ]]; then
+    _err "Java not found inside conda env '$CONDA_ENV_NAME'."
+    _err "Try removing and recreating the env:"
+    _err "  conda env remove -n $CONDA_ENV_NAME && $0 --input ... --metadata ..."
+    exit 1
+fi
+
+_ok "Java found: $("$CONDA_JAVA_HOME/bin/java" -version 2>&1 | head -1)"
+
+# ── 7. Run pipeline via conda run ─────────────────────────────
 echo ""
 echo "============================================================="
 echo "  Community Structure Analysis Pipeline"
@@ -142,7 +167,10 @@ echo ""
 _info "Launching Nextflow via conda env '$CONDA_ENV_NAME'..."
 echo ""
 
+# NXF_JAVA_HOME tells Nextflow exactly which Java to use, regardless of any
+# system-wide JAVA_HOME set by the cluster environment or modules.
 "$CONDA_CMD" run -n "$CONDA_ENV_NAME" --no-capture-output \
+    env NXF_JAVA_HOME="$CONDA_JAVA_HOME" \
     nextflow run "$SCRIPT_DIR/main.nf" \
     $profile_flag \
     "$@"
