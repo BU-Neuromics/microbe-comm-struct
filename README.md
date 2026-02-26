@@ -166,6 +166,57 @@ External binary: `fastspar` 1.0.0 (compiled from source).
 
 ---
 
+## Running on a SLURM cluster
+
+The Docker image is built automatically on every push to `main` via GitHub
+Actions and published to GHCR:
+
+```
+ghcr.io/bu-neuromics/microbe-comm-struct:latest
+```
+
+Singularity (common on HPC) pulls from this registry automatically.
+
+**If the package is private**, export credentials before running:
+
+```bash
+export SINGULARITY_DOCKER_USERNAME=<your_github_username>
+export SINGULARITY_DOCKER_PASSWORD=<github_personal_access_token>
+```
+
+**Run on the cluster:**
+
+```bash
+./run_pipeline.sh \
+    --input    data/counts_family.csv \
+    --metadata data/metadata.csv \
+    --output_dir results/family \
+    -profile slurm
+```
+
+Adjust `queue`, `cpus`, `memory`, and `time` in the `slurm` profile of
+`nextflow.config` to match your cluster's policies. For FastSpar with large
+datasets, allocate at least 20 CPUs and 64 GB — the bootstrap loop
+parallelizes across all available CPUs using `parallel::mclapply`.
+
+> **Note:** The image is `linux/amd64` only. Standard x86_64 HPC nodes work
+> natively. No QEMU needed on the cluster.
+
+---
+
+## CI/CD
+
+A GitHub Actions workflow (`.github/workflows/docker-build.yml`) automatically:
+- Builds the Docker image on every push to `main`
+- Pushes `:latest` and `:sha-<short-sha>` tags to GHCR
+- Creates `:v1.2.3` tags for version tags
+- Uses GitHub Actions layer cache to speed up rebuilds
+
+To pin a specific image version on the cluster instead of `:latest`, use the
+`:sha-<short-sha>` tag (visible in the Actions run or `ghcr.io` package page).
+
+---
+
 ## Citation
 
 If using FastSpar, please cite:

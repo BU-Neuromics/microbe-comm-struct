@@ -194,6 +194,15 @@ Use positional `commandArgs(trailingOnly = TRUE)`; keep it simple.
   - System binary: `fastspar` (compiled from source)
 - **Working dir inside container:** `/workspace`
 
+### CI/CD — GitHub Actions + GHCR
+
+The Docker image is built and published automatically on every push to `main`:
+- Workflow: `.github/workflows/docker-build.yml`
+- Registry: `ghcr.io/bu-neuromics/microbe-comm-struct`
+- Tags pushed: `:latest`, `:sha-<short>`, `:vX.Y.Z` (on version tags)
+- Cluster usage: Singularity pulls `docker://ghcr.io/bu-neuromics/microbe-comm-struct:latest`
+- **Do not manually push the image** — let CI handle it after merging code changes.
+
 ### Build Troubleshooting — ARM64 (DGX Spark)
 
 The `bioc2u-builder` base image is **amd64-only**. This machine is arm64.
