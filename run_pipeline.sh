@@ -35,7 +35,7 @@
 # Nextflow options (passed through directly):
 #   -profile docker    Use Docker (default)
 #   -profile local     Run without Docker (packages must be installed locally)
-#   -profile slurm     Submit to SLURM via Singularity
+#   -profile sge     Submit to SLURM via Singularity
 #   -resume            Resume a previous run from cached task results
 #
 # Examples:
@@ -47,7 +47,7 @@
 #       --taxonomy taxonomy.csv \
 #       --output_dir results/family
 #
-#   ./run_pipeline.sh --input counts.csv --metadata metadata.csv -profile slurm
+#   ./run_pipeline.sh --input counts.csv --metadata metadata.csv -profile sge
 #   ./run_pipeline.sh --input counts.csv --metadata metadata.csv -resume
 # ============================================================
 
@@ -113,7 +113,7 @@ fi
 # ── 4. Check Docker image (docker profile only) ───────────────
 using_docker=true
 for arg in "$@"; do
-    if [[ "$arg" == "slurm" || "$arg" == "local" ]]; then
+    if [[ "$arg" == "sge" || "$arg" == "local" ]]; then
         using_docker=false
     fi
 done
