@@ -35,7 +35,7 @@
 # Nextflow options (passed through directly):
 #   -profile docker    Use Docker (default)
 #   -profile local     Run without Docker (packages must be installed locally)
-#   -profile sge     Submit to SLURM via Singularity
+#   -profile sge       Submit to SGE cluster via Singularity
 #   -resume            Resume a previous run from cached task results
 #
 # Examples:
@@ -97,41 +97,54 @@ else
     _ok "Conda env '$CONDA_ENV_NAME' created"
 fi
 
-# ── 3. Validate required arguments ───────────────────────────
-has_input=0; has_metadata=0
-for arg in "$@"; do
-    [[ "$arg" == "--input"    ]] && has_input=1
-    [[ "$arg" == "--metadata" ]] && has_metadata=1
+# ── 3. Parse arguments ────────────────────────────────────────
+# Known pipeline args are captured into named variables; everything else is
+# collected into NXF_ARGS and forwarded to nextflow as-is.
+INPUT=""
+METADATA=""
+TAXONOMY=""
+OUTPUT_DIR="results"
+SEED=42
+PROFILE=""
+NXF_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --input)      INPUT="$2";      shift 2 ;;
+        --metadata)   METADATA="$2";   shift 2 ;;
+        --taxonomy)   TAXONOMY="$2";   shift 2 ;;
+        --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
+        --seed)       SEED="$2";       shift 2 ;;
+        -profile|--profile)
+                      PROFILE="$2";    shift 2 ;;
+        *)            NXF_ARGS+=("$1"); shift ;;
+    esac
 done
 
-if (( ! has_input || ! has_metadata )); then
+if [[ -z "$INPUT" || -z "$METADATA" ]]; then
     # Print only the contiguous comment block at the top of the file
     awk 'NR==1{next} /^[^#]/{exit} {sub(/^# ?/,""); print}' "$0"
     exit 1
 fi
 
 # ── 4. Check Docker image (docker profile only) ───────────────
-using_docker=true
-for arg in "$@"; do
-    if [[ "$arg" == "sge" || "$arg" == "local" ]]; then
-        using_docker=false
-    fi
-done
-
-if $using_docker && command -v docker &>/dev/null; then
-    if ! docker image inspect microbe-comm-struct:latest &>/dev/null; then
-        _info "Docker image 'microbe-comm-struct:latest' not found — building..."
-        bash "$SCRIPT_DIR/build.sh"
-    else
-        _ok "Docker image microbe-comm-struct:latest is present"
+if [[ "$PROFILE" != "sge" && "$PROFILE" != "local" ]]; then
+    if command -v docker &>/dev/null; then
+        if ! docker image inspect microbe-comm-struct:latest &>/dev/null; then
+            _info "Docker image 'microbe-comm-struct:latest' not found — building..."
+            bash "$SCRIPT_DIR/build.sh"
+        else
+            _ok "Docker image microbe-comm-struct:latest is present"
+        fi
     fi
 fi
 
-# ── 5. Default to docker profile unless caller passed -profile ─
-profile_flag="-profile docker"
-for arg in "$@"; do
-    [[ "$arg" == "-profile" || "$arg" == "--profile" ]] && { profile_flag=""; break; }
-done
+# ── 5. Build profile flag ─────────────────────────────────────
+if [[ -n "$PROFILE" ]]; then
+    profile_flag="-profile $PROFILE"
+else
+    profile_flag="-profile docker"
+fi
 
 # ── 6. Verify Java works inside the conda env ─────────────────
 # Resolve the env prefix so we can set NXF_JAVA_HOME explicitly.
@@ -169,14 +182,22 @@ echo ""
 
 # NXF_JAVA_HOME tells Nextflow exactly which Java to use, regardless of any
 # system-wide JAVA_HOME set by the cluster environment or modules.
+#
+# Pipeline args are passed explicitly; NXF_ARGS carries any extra nextflow
+# flags (e.g. -resume, -with-report) that were not consumed during parsing.
+taxonomy_arg=""
+[[ -n "$TAXONOMY" ]] && taxonomy_arg="--taxonomy $TAXONOMY"
+
 "$CONDA_CMD" run -n "$CONDA_ENV_NAME" --no-capture-output \
     env NXF_JAVA_HOME="$CONDA_JAVA_HOME" \
     nextflow run "$SCRIPT_DIR/main.nf" \
     $profile_flag \
-    "$@"
+    --input      "$INPUT" \
+    --metadata   "$METADATA" \
+    --output_dir "$OUTPUT_DIR" \
+    --seed       "$SEED" \
+    $taxonomy_arg \
+    "${NXF_ARGS[@]}"
 
 echo ""
-_ok "Pipeline complete."
-out_dir="$(echo "$*" | grep -oP '(?<=--output_dir )\S+' || true)"
-out_dir="${out_dir:-results}"
-echo "Results: ${out_dir}/"
+_ok "Pipeline complete. Results: ${OUTPUT_DIR}/"
