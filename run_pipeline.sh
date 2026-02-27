@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
-# run_pipeline.sh – launcher for the community structure pipeline
+# run_pipeline.sh – launcher for the ordination pipeline
 # ============================================================
-# Runs all four analyses in parallel via Nextflow + Docker:
+# Runs Aitchison PCA and Robust PCA on every counts CSV found
+# in the input directory, one per taxonomic level:
 #   01  Aitchison PCA  (CLR-based ordination)
 #   02  Robust PCA     (rCLR + softImpute + rsvd)
-#   03  FastSpar       (co-occurrence network, bootstrap p-values)
-#   04  Null-model     (Erdős–Rényi + configuration model validation)
+#
+# Results land in <output_dir>/<level>/{aitchison_pca,rpca_deicode}/
 #
 # Nextflow is invoked via `conda run` using the environment defined in
 # environment.yml (name: microbe-comm-struct).  The environment is created
@@ -20,16 +21,14 @@
 #     docker run --privileged --rm tonistiigi/binfmt --install x86_64
 #
 # Usage:
-#   ./run_pipeline.sh --input <counts.csv> --metadata <meta.csv> [options]
+#   ./run_pipeline.sh --input_dir <dir/> --metadata <meta.csv> [options]
 #
 # Required:
-#   --input FILE       Counts CSV (rows = taxa, columns = samples)
+#   --input_dir DIR    Directory containing counts CSVs (one per taxonomic level)
 #   --metadata FILE    Sample metadata CSV; must have a 'group' column
 #
 # Optional:
-#   --taxonomy FILE    Taxonomy CSV for FastSpar heatmap annotation
-#                      Columns: taxon_id, kingdom, phylum, class, order, family, genus
-#   --output_dir DIR   Output directory [default: results]
+#   --output_dir DIR   Root output directory [default: results]
 #   --seed INT         Random seed [default: 42]
 #
 # Nextflow options (passed through directly):
@@ -39,16 +38,20 @@
 #   -resume            Resume a previous run from cached task results
 #
 # Examples:
-#   ./run_pipeline.sh --input counts.csv --metadata metadata.csv
+#   ./run_pipeline.sh \
+#       --input_dir data/filtered/ \
+#       --metadata  metadata.csv
 #
 #   ./run_pipeline.sh \
-#       --input    counts.csv \
-#       --metadata metadata.csv \
-#       --taxonomy taxonomy.csv \
-#       --output_dir results/family
+#       --input_dir data/filtered/ \
+#       --metadata  metadata.csv \
+#       --output_dir results \
+#       -profile sge
 #
-#   ./run_pipeline.sh --input counts.csv --metadata metadata.csv -profile sge
-#   ./run_pipeline.sh --input counts.csv --metadata metadata.csv -resume
+#   ./run_pipeline.sh \
+#       --input_dir data/filtered/ \
+#       --metadata  metadata.csv \
+#       -resume
 # ============================================================
 
 set -euo pipefail
@@ -100,9 +103,8 @@ fi
 # ── 3. Parse arguments ────────────────────────────────────────
 # Known pipeline args are captured into named variables; everything else is
 # collected into NXF_ARGS and forwarded to nextflow as-is.
-INPUT=""
+INPUT_DIR=""
 METADATA=""
-TAXONOMY=""
 OUTPUT_DIR="results"
 SEED=42
 PROFILE=""
@@ -110,9 +112,8 @@ NXF_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --input)      INPUT="$2";      shift 2 ;;
+        --input_dir)  INPUT_DIR="$2";  shift 2 ;;
         --metadata)   METADATA="$2";   shift 2 ;;
-        --taxonomy)   TAXONOMY="$2";   shift 2 ;;
         --output_dir) OUTPUT_DIR="$2"; shift 2 ;;
         --seed)       SEED="$2";       shift 2 ;;
         -profile|--profile)
@@ -121,7 +122,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$INPUT" || -z "$METADATA" ]]; then
+if [[ -z "$INPUT_DIR" || -z "$METADATA" ]]; then
     # Print only the contiguous comment block at the top of the file
     awk 'NR==1{next} /^[^#]/{exit} {sub(/^# ?/,""); print}' "$0"
     exit 1
@@ -185,18 +186,14 @@ echo ""
 #
 # Pipeline args are passed explicitly; NXF_ARGS carries any extra nextflow
 # flags (e.g. -resume, -with-report) that were not consumed during parsing.
-taxonomy_arg=""
-[[ -n "$TAXONOMY" ]] && taxonomy_arg="--taxonomy $TAXONOMY"
-
 "$CONDA_CMD" run -n "$CONDA_ENV_NAME" --no-capture-output \
     env NXF_JAVA_HOME="$CONDA_JAVA_HOME" \
     nextflow run "$SCRIPT_DIR/main.nf" \
     $profile_flag \
-    --input      "$INPUT" \
+    --input_dir  "$INPUT_DIR" \
     --metadata   "$METADATA" \
     --output_dir "$OUTPUT_DIR" \
     --seed       "$SEED" \
-    $taxonomy_arg \
     "${NXF_ARGS[@]}"
 
 echo ""
